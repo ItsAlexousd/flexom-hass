@@ -14,7 +14,7 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
-from ..const import (
+from .const import (
     DOMAIN,
     FACTOR_BRIGHTNESS,
     FACTOR_BRIGHTNESS_EXT,
@@ -22,7 +22,7 @@ from ..const import (
     WS_TYPE_FACTOR_TARGET_STATE,
     WS_TYPE_FACTOR_CURRENT_STATE
 )
-from ..hemis import HemisApiClient
+from .hemis import HemisApiClient
 
 _LOGGER = logging.getLogger(__name__)
 

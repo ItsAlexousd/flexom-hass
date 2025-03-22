@@ -3,7 +3,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import aiohttp
-import async_timeout
+import asyncio
 
 from .const import (
     FACTOR_BRIGHTNESS,
@@ -29,24 +29,29 @@ class HemisApiClient:
 
     async def get_zones(self) -> List[Dict[str, Any]]:
         """Get all zones."""
-        return await self._api_request("GET", "/zones")
+        return await self._api_call("/zones")
 
     async def get_zone_factors(self, zone_id: str) -> List[Dict[str, Any]]:
         """Get all factors for a zone."""
-        return await self._api_request("GET", f"/zones/{zone_id}/factors")
+        return await self._api_call(f"/zones/{zone_id}/factors")
 
     async def get_sensors(self) -> List[Dict[str, Any]]:
         """Get all sensors."""
-        return await self._api_request("GET", "/intelligent-things/sensors")
+        return await self._api_call("/intelligent-things/sensors")
 
     async def get_actuators(self) -> List[Dict[str, Any]]:
         """Get all actuators."""
-        return await self._api_request("GET", "/intelligent-things/actuators")
+        return await self._api_call("/intelligent-things/actuators")
 
     async def get_light_actuators(self) -> List[Dict[str, Any]]:
         """Get all light actuators."""
         _LOGGER.debug("Fetching light actuators")
         actuators = await self.get_actuators()
+        
+        if actuators is None:
+            _LOGGER.error("Failed to get actuators, returning empty list")
+            return []
+            
         _LOGGER.debug("Found %d actuators in total", len(actuators))
         
         light_actuators = [
@@ -86,10 +91,10 @@ class HemisApiClient:
             "progressive": False,
         }
         
-        result = await self._api_request(
-            "PUT", 
+        result = await self._api_call(
             f"/intelligent-things/actuators/{actuator_id}/states/{FACTOR_BRIGHTNESS}",
-            data
+            method="PUT",
+            data=data
         )
         
         return isinstance(result, dict)
@@ -101,10 +106,10 @@ class HemisApiClient:
             "progressive": True,
         }
         
-        result = await self._api_request(
-            "PUT", 
+        result = await self._api_call(
             f"/intelligent-things/actuators/{actuator_id}/states/{FACTOR_BRIGHTNESS_EXT}",
-            data
+            method="PUT",
+            data=data
         )
         
         return isinstance(result, dict)
@@ -116,61 +121,110 @@ class HemisApiClient:
             "progressive": False,
         }
         
-        result = await self._api_request(
-            "PUT", 
+        result = await self._api_call(
             f"/intelligent-things/actuators/{actuator_id}/states/{FACTOR_TEMPERATURE}",
-            data
+            method="PUT",
+            data=data
         )
         
         return isinstance(result, dict)
 
-    async def _api_request(
-        self, 
-        method: str, 
-        endpoint: str, 
-        data: Optional[Dict[str, Any]] = None
-    ) -> Any:
-        """Make a request to the Hemis API."""
+    async def _api_call(self, endpoint, method="GET", data=None, headers=None):
+        """Make an API call to the Hemis API."""
         url = f"{self.hemis_base_url}{endpoint}"
-        headers = {
+        headers = headers or {}
+        headers.update({
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json",
-        }
-        
-        _LOGGER.debug("API request: %s %s", method, url)
-        if data:
-            _LOGGER.debug("Request data: %s", data)
-            
-        try:
-            async with async_timeout.timeout(10):
+        })
+
+        for retry in range(3):  # Retry up to 3 times
+            try:
                 if method == "GET":
-                    response = await self.session.get(url, headers=headers)
-                elif method == "PUT":
-                    response = await self.session.put(url, headers=headers, json=data)
+                    async with self.session.get(
+                        url, headers=headers, timeout=10
+                    ) as response:
+                        if response.status != 200:
+                            _LOGGER.error(
+                                "Error calling %s: %s %s",
+                                url,
+                                response.status,
+                                response.reason,
+                            )
+                            # If we got a 502, retry after a delay
+                            if response.status == 502 and retry < 2:
+                                wait_time = (retry + 1) * 2
+                                _LOGGER.warning(
+                                    "Received 502 Bad Gateway, retrying in %s seconds (attempt %s/3)",
+                                    wait_time,
+                                    retry + 1
+                                )
+                                await asyncio.sleep(wait_time)
+                                continue
+                            return None
+                        return await response.json()
                 elif method == "POST":
-                    response = await self.session.post(url, headers=headers, json=data)
-                else:
-                    _LOGGER.error("Unsupported method: %s", method)
-                    return None
-                
-                if response.status >= 400:
-                    _LOGGER.error(
-                        "Error from Hemis API: %s %s", 
-                        response.status, 
-                        await response.text()
-                    )
-                    return None
-                
-                if response.status == 204:  # No content
-                    return {}
-                
-                result = await response.json()
-                _LOGGER.debug("API response: %s", result)
-                return result
-                
-        except aiohttp.ClientError as err:
-            _LOGGER.error("Error connecting to Hemis API: %s", err)
-            return None
-        except async_timeout.TimeoutError:
-            _LOGGER.error("Timeout connecting to Hemis API")
-            return None
+                    async with self.session.post(
+                        url, headers=headers, json=data, timeout=10
+                    ) as response:
+                        if response.status != 200:
+                            _LOGGER.error(
+                                "Error calling %s: %s %s",
+                                url,
+                                response.status,
+                                response.reason,
+                            )
+                            # If we got a 502, retry after a delay
+                            if response.status == 502 and retry < 2:
+                                wait_time = (retry + 1) * 2
+                                _LOGGER.warning(
+                                    "Received 502 Bad Gateway, retrying in %s seconds (attempt %s/3)",
+                                    wait_time,
+                                    retry + 1
+                                )
+                                await asyncio.sleep(wait_time)
+                                continue
+                            return None
+                        return await response.json()
+                elif method == "PUT":
+                    async with self.session.put(
+                        url, headers=headers, json=data, timeout=10
+                    ) as response:
+                        if response.status != 200:
+                            _LOGGER.error(
+                                "Error calling %s: %s %s",
+                                url,
+                                response.status,
+                                response.reason,
+                            )
+                            # If we got a 502, retry after a delay
+                            if response.status == 502 and retry < 2:
+                                wait_time = (retry + 1) * 2
+                                _LOGGER.warning(
+                                    "Received 502 Bad Gateway, retrying in %s seconds (attempt %s/3)",
+                                    wait_time,
+                                    retry + 1
+                                )
+                                await asyncio.sleep(wait_time)
+                                continue
+                            return None
+                        if response.status == 204:  # No content
+                            return {}
+                        return await response.json()
+            except asyncio.TimeoutError:
+                _LOGGER.error("Timeout calling %s (attempt %s/3)", url, retry + 1)
+                if retry < 2:
+                    wait_time = (retry + 1) * 2
+                    await asyncio.sleep(wait_time)
+                    continue
+                return None
+            except (aiohttp.ClientError, asyncio.exceptions.CancelledError) as err:
+                _LOGGER.error("Error calling %s: %s (attempt %s/3)", url, err, retry + 1)
+                if retry < 2:
+                    wait_time = (retry + 1) * 2
+                    await asyncio.sleep(wait_time)
+                    continue
+                return None
+        
+        # If we got here, all retries failed
+        return None

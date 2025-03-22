@@ -3,10 +3,12 @@ import asyncio
 import json
 import logging
 import urllib.parse
+import time
 from typing import Any, Callable, Dict, Optional, List
 
 import stomper
 import websockets
+import ssl
 from homeassistant.core import HomeAssistant
 
 from .const import STOMP_TOPIC_DATA
@@ -36,7 +38,8 @@ class HemisWebSocketClient:
         stomp_url: str,
         building_id: str,
         token: str,
-        message_callback: Callable[[Dict[str, Any]], None]
+        message_callback: Callable[[Dict[str, Any]], None],
+        reconnect_interval: int = 60
     ) -> None:
         """Initialize the WebSocket client."""
         self.hass = hass
@@ -50,6 +53,8 @@ class HemisWebSocketClient:
         self.is_running = False
         self.subscription_id = "1"
         self.connection_id = None
+        self.reconnect_interval = reconnect_interval
+        self.last_received = 0
 
     async def connect(self) -> bool:
         """Connect to the WebSocket server."""
@@ -61,7 +66,7 @@ class HemisWebSocketClient:
             # Use WebSocketApp from websockets library
             self.ws = await websockets.connect(
                 self.stomp_url,
-                ssl=parsed_url.scheme == "wss"
+                ssl=ssl.create_default_context() if parsed_url.scheme == "https" else None
             )
             
             _LOGGER.debug("WebSocket connection established")
@@ -177,75 +182,110 @@ class HemisWebSocketClient:
             return
             
         try:
-            while self.is_running:
-                message = await self.ws.recv()
-                
-                if not message:
-                    continue
-                
-                # Convert bytes to string if necessary
-                if isinstance(message, bytes):
-                    message_str = message.decode('utf-8')
-                else:
-                    message_str = message
-                    
-                _LOGGER.debug("Received WebSocket message: %s", message_str[:100])
-                
-                if message_str.startswith("MESSAGE"):
-                    # Extract message body using a manual split approach
-                    try:
-                        # Split into headers and body - the body comes after a blank line
-                        parts = message_str.split("\n\n", 1)
-                        if len(parts) < 2:
-                            continue
-                            
-                        body = parts[1].rstrip('\x00')
-                        try:
-                            # Nettoyage du corps JSON
-                            if "}" in body:
-                                # Trouver la fin du premier objet JSON (le contenu valide)
-                                json_end = body.find("}") + 1
-                                if json_end > 0:
-                                    cleaned_body = body[:json_end]
-                                    data = json.loads(cleaned_body)
-                                    _LOGGER.debug("Successfully parsed message: %s", data)
-                                    
-                                    # Ne traiter que les types d'événements connus
-                                    if "type" in data and data["type"] in EVENT_TYPES:
-                                        # Appel direct au callback sans créer de tâche
-                                        self.message_callback(data)
-                                    else:
-                                        _LOGGER.debug("Ignoring unknown event type: %s", data.get("type"))
-                                else:
-                                    _LOGGER.warning("Could not find JSON end marker in body")
-                            else:
-                                _LOGGER.warning("No JSON object found in message body")
-                        except json.JSONDecodeError as e:
-                            _LOGGER.error("Invalid JSON received: %s - Error: %s", body, str(e))
-                    except Exception as e:
-                        _LOGGER.error("Error processing message: %s - Error: %s", message_str[:100], str(e))
-                
-                elif message_str.startswith("ERROR"):
-                    _LOGGER.error("STOMP error: %s", message_str)
-                    self.is_running = False
-                    break
-                    
-                # Réinitialiser la connexion si nécessaire
-                elif message_str.startswith("RECEIPT"):
-                    _LOGGER.debug("Received RECEIPT frame: %s", message_str)
-                
-        except websockets.ConnectionClosed:
-            _LOGGER.warning("WebSocket connection closed, attempting reconnect in 5 seconds")
-            await asyncio.sleep(5)
-            # Tenter de se reconnecter
-            if await self.connect():
-                self.is_running = True
-                self.task = asyncio.create_task(self._listen())
-        except Exception as err:
-            _LOGGER.error("Error in WebSocket listener: %s", err)
-        finally:
-            self.is_running = False
+            self.last_received = time.time()
             
+            while self.is_running:
+                try:
+                    message = await asyncio.wait_for(self.ws.recv(), timeout=30)
+                    self.last_received = time.time()
+                    
+                    if not message:
+                        continue
+                    
+                    # Convert bytes to string if necessary
+                    if isinstance(message, bytes):
+                        message_str = message.decode('utf-8')
+                    else:
+                        message_str = message
+                        
+                    # Only log first part of the message to avoid excessive logging
+                    if len(message_str) > 100:
+                        log_msg = message_str[:100] + "..."
+                    else:
+                        log_msg = message_str
+                        
+                    _LOGGER.debug("Received WebSocket message: %s", log_msg)
+                    
+                    if message_str.startswith("MESSAGE"):
+                        # Extract message body using a manual split approach
+                        try:
+                            # Split into headers and body - the body comes after a blank line
+                            parts = message_str.split("\n\n", 1)
+                            if len(parts) < 2:
+                                _LOGGER.warning("Invalid MESSAGE format, no body found")
+                                continue
+                                
+                            body = parts[1].rstrip('\x00')
+                            try:
+                                # Clean up JSON body
+                                if "}" in body:
+                                    # Find the end of the first JSON object (valid content)
+                                    json_end = body.find("}") + 1
+                                    if json_end > 0:
+                                        cleaned_body = body[:json_end]
+                                        _LOGGER.debug("Parsing JSON body: %s", cleaned_body[:100] + "..." if len(cleaned_body) > 100 else cleaned_body)
+                                        data = json.loads(cleaned_body)
+                                        
+                                        # Only process known event types
+                                        if "type" in data and data["type"] in EVENT_TYPES:
+                                            _LOGGER.debug("Processing message of type: %s", data["type"])
+                                            # Call the callback directly
+                                            await self.message_callback(data)
+                                        else:
+                                            _LOGGER.debug("Ignoring unknown event type: %s", data.get("type"))
+                                    else:
+                                        _LOGGER.warning("Could not find JSON end marker in body")
+                                else:
+                                    _LOGGER.warning("No JSON object found in message body: %s", body[:100])
+                            except json.JSONDecodeError as e:
+                                _LOGGER.error("Invalid JSON received: %s - Error: %s", body[:100], str(e))
+                        except Exception as e:
+                            _LOGGER.error("Error processing message: %s - Error: %s", message_str[:100], str(e))
+                    
+                    elif message_str.startswith("ERROR"):
+                        _LOGGER.error("STOMP error: %s", message_str)
+                        # Try to reconnect if we get an error
+                        self.is_running = False
+                        break
+                        
+                    elif message_str.startswith("RECEIPT"):
+                        _LOGGER.debug("Received RECEIPT frame: %s", message_str)
+                    
+                    elif message_str == "\n" or message_str.strip() == "":
+                        _LOGGER.debug("Received heartbeat")
+                
+                except asyncio.TimeoutError:
+                    # Check if we need to send a heartbeat
+                    current_time = time.time()
+                    time_since_last = current_time - self.last_received
+                    
+                    _LOGGER.debug("No message received for %s seconds", time_since_last)
+                    
+                    if time_since_last > 10:
+                        try:
+                            await self.ws.send("\n")
+                            _LOGGER.debug("Sent heartbeat")
+                        except Exception as err:
+                            _LOGGER.error("Error sending heartbeat: %s", str(err))
+                            break
+                
+                except Exception as e:
+                    _LOGGER.error("WebSocket listen error: %s", str(e))
+                    # Break the loop if we get an error to trigger reconnection
+                    break
+            
+            _LOGGER.debug("WebSocket listener stopped")
+            
+            # Start reconnection process if we're still supposed to be running
+            if self.is_running:
+                self.ws = None
+                _LOGGER.info("WebSocket connection lost, will attempt to reconnect")
+                asyncio.create_task(self.reconnect())
+                
+        except Exception as e:
+            _LOGGER.error("Fatal error in WebSocket listener: %s", str(e), exc_info=True)
+            self.is_running = False
+
     async def _send_heartbeats(self) -> None:
         """Send heartbeats to keep the connection alive."""
         try:
@@ -267,3 +307,30 @@ class HemisWebSocketClient:
         """Update the authentication token."""
         self.token = new_token
         _LOGGER.debug("Updated WebSocket token")
+
+    async def reconnect(self):
+        """Reconnect to the websocket server."""
+        if not self.is_running:
+            return
+            
+        _LOGGER.info("Reconnecting to Hemis WebSocket")
+        
+        # Close existing connection if it exists
+        if self.ws and not self.ws.closed:
+            try:
+                await self.ws.close()
+            except Exception:
+                pass
+            self.ws = None
+        
+        # Parse WebSocket URL to get host
+        parsed_url = urllib.parse.urlparse(self.stomp_url)
+        host = parsed_url.netloc
+        
+        # Attempt to reconnect
+        success = await self.connect()
+        
+        if not success:
+            _LOGGER.error("Failed to reconnect to Hemis WebSocket, will retry in %s seconds", self.reconnect_interval)
+            await asyncio.sleep(self.reconnect_interval)
+            asyncio.create_task(self.reconnect())

@@ -43,7 +43,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     password = entry.data[CONF_PASSWORD]
 
     # Run API diagnostics
-    await test_api_connectivity(username, password)
+    _LOGGER.info("Running API diagnostics")
+    diagnostic_results = await test_api_connectivity(username, password)
+    
+    # Log diagnostic results
+    if diagnostic_results["errors"]:
+        _LOGGER.warning("API diagnostic found %d issues", len(diagnostic_results["errors"]))
+        for error in diagnostic_results["errors"]:
+            _LOGGER.warning("Diagnostic error: %s", error)
+    else:
+        _LOGGER.info("API diagnostic completed successfully with no errors")
+        
+    if diagnostic_results["zones"] is not None:
+        _LOGGER.info("Found %d zones during diagnostic", diagnostic_results["zones"])
+    
+    if diagnostic_results["actuators"] is not None:
+        _LOGGER.info("Found %d actuators during diagnostic", diagnostic_results["actuators"])
 
     # Create API clients
     session = async_get_clientsession(hass)
@@ -60,6 +75,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if not building_id or not hemis_base_url or not hemis_stomp_url:
         raise ConfigEntryNotReady("Failed to get Hemis building info")
+        
+    _LOGGER.info("Successfully authenticated with building ID: %s", building_id)
+    _LOGGER.info("Hemis base URL: %s", hemis_base_url)
+    _LOGGER.info("Hemis STOMP URL: %s", hemis_stomp_url)
 
     # Create Hemis API client
     hemis_client = HemisApiClient(
@@ -67,6 +86,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hemis_base_url,
         hemisphere_client.hemisphere_token
     )
+    
+    # Test API connectivity - but don't fail if it doesn't work initially
+    try:
+        zones = await hemis_client.get_zones()
+        if zones is None:
+            _LOGGER.warning("Failed to fetch zones from Hemis API, but continuing setup")
+        else:
+            _LOGGER.info("Successfully fetched %d zones from Hemis API", len(zones))
+    except Exception as api_err:
+        _LOGGER.warning("Error testing Hemis API connectivity: %s - continuing setup", api_err)
 
     # Create WebSocket data queue for realtime updates
     ws_data_queue: List[Dict[str, Any]] = []
@@ -75,11 +104,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     @callback
     def handle_ws_message(message: Dict[str, Any]) -> None:
         """Handle messages from the WebSocket."""
-        ws_data_queue.append(message)
-        coordinator.async_set_updated_data(ws_data_queue.copy())
-        # Keep only the last 50 messages
-        while len(ws_data_queue) > 50:
-            ws_data_queue.pop(0)
+        try:
+            # Add message to the queue
+            ws_data_queue.append(message)
+            
+            # Log message for debugging
+            msg_type = message.get("type", "unknown")
+            msg_id = message.get("id", "unknown")
+            
+            # Get actuator or zone ID if present
+            entity_id = (
+                message.get("actuatorId") or 
+                message.get("itId") or 
+                message.get("zoneId") or 
+                "unknown"
+            )
+            
+            # Get factor ID if present
+            factor_id = message.get("factorId", "unknown")
+            
+            # Log a summary of the message
+            _LOGGER.debug(
+                "WebSocket message: type=%s, entity_id=%s, factor=%s",
+                msg_type,
+                entity_id,
+                factor_id
+            )
+            
+            # Update coordinator data
+            coordinator.async_set_updated_data(ws_data_queue.copy())
+            
+            # Keep only the last 50 messages
+            while len(ws_data_queue) > 50:
+                ws_data_queue.pop(0)
+                
+        except Exception as err:
+            _LOGGER.error("Error processing WebSocket message: %s", err, exc_info=True)
 
     # Create WebSocket client
     ws_client = HemisWebSocketClient(
