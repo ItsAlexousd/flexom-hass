@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import urllib.parse
 from typing import Any, Callable, Dict, Optional
 
 import stomper
@@ -38,22 +39,35 @@ class HemisWebSocketClient:
     async def connect(self) -> bool:
         """Connect to the WebSocket server."""
         try:
-            self.ws = await websockets.connect(self.stomp_url)
+            # Parse the URL
+            parsed_url = urllib.parse.urlparse(self.stomp_url)
+            _LOGGER.debug("Connecting to WebSocket URL: %s", self.stomp_url)
+            
+            # Use WebSocketApp from websockets library
+            self.ws = await websockets.connect(
+                self.stomp_url,
+                ssl=parsed_url.scheme == "wss"
+            )
+            
+            _LOGGER.debug("WebSocket connection established")
             
             # Send STOMP CONNECT frame
-            connect_frame = stomper.connect()
             connect_frame = stomper.Frame()
             connect_frame.cmd = "CONNECT"
             connect_frame.headers = {
                 "accept-version": "1.0,1.1,1.2",
-                "host": self.stomp_url,
+                "host": parsed_url.netloc,
                 "login": self.building_id,
                 "passcode": self.token,
             }
-            await self.ws.send(connect_frame.pack())
+            
+            connect_str = connect_frame.pack()
+            _LOGGER.debug("Sending STOMP CONNECT frame: %s", connect_str)
+            await self.ws.send(connect_str)
             
             # Wait for CONNECTED response
             response = await self.ws.recv()
+            _LOGGER.debug("Received from WebSocket: %s", response)
             
             if not response.startswith("CONNECTED"):
                 _LOGGER.error("Failed to connect to Hemis WebSocket: %s", response)
@@ -66,10 +80,20 @@ class HemisWebSocketClient:
             
             # Subscribe to the data topic
             topic = STOMP_TOPIC_DATA.format(building_id=self.building_id)
-            subscribe_frame = stomper.subscribe(topic, self.subscription_id, ack="auto")
-            await self.ws.send(subscribe_frame)
+            _LOGGER.debug("Subscribing to topic: %s", topic)
             
-            _LOGGER.info("Connected to Hemis WebSocket")
+            subscribe_frame = stomper.Frame()
+            subscribe_frame.cmd = "SUBSCRIBE"
+            subscribe_frame.headers = {
+                "id": self.subscription_id,
+                "destination": topic,
+                "ack": "auto"
+            }
+            
+            subscribe_str = subscribe_frame.pack()
+            await self.ws.send(subscribe_str)
+            
+            _LOGGER.info("Connected to Hemis WebSocket and subscribed to topics")
             return True
             
         except Exception as err:
@@ -89,9 +113,13 @@ class HemisWebSocketClient:
         
         if self.ws:
             # Send STOMP DISCONNECT frame
-            disconnect_frame = stomper.disconnect()
+            disconnect_frame = stomper.Frame()
+            disconnect_frame.cmd = "DISCONNECT"
+            if self.connection_id:
+                disconnect_frame.headers = {"receipt": self.connection_id}
+            
             try:
-                await self.ws.send(disconnect_frame)
+                await self.ws.send(disconnect_frame.pack())
                 await self.ws.close()
             except Exception as err:
                 _LOGGER.error("Error disconnecting from Hemis WebSocket: %s", err)
@@ -119,6 +147,8 @@ class HemisWebSocketClient:
                 if not message:
                     continue
                 
+                _LOGGER.debug("Received WebSocket message: %s", message[:100])
+                
                 if message.startswith("MESSAGE"):
                     # Extract message body
                     parts = message.split("\n\n", 1)
@@ -145,5 +175,5 @@ class HemisWebSocketClient:
             
     async def send_heartbeat(self) -> None:
         """Send a heartbeat to keep the connection alive."""
-        if self.ws and self.ws.open:
+        if self.ws and not self.ws.closed:
             await self.ws.send("\n")
