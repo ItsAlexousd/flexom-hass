@@ -138,11 +138,14 @@ class HemisApiClient:
             "Content-Type": "application/json",
         })
 
-        for retry in range(3):  # Retry up to 3 times
+        # Add longer timeout for potentially slow servers
+        timeout = 30
+
+        for retry in range(5):  # Increase retries to 5
             try:
                 if method == "GET":
                     async with self.session.get(
-                        url, headers=headers, timeout=10
+                        url, headers=headers, timeout=timeout
                     ) as response:
                         if response.status != 200:
                             _LOGGER.error(
@@ -151,12 +154,14 @@ class HemisApiClient:
                                 response.status,
                                 response.reason,
                             )
-                            # If we got a 502, retry after a delay
-                            if response.status == 502 and retry < 2:
-                                wait_time = (retry + 1) * 2
+                            # If we got a 502, retry after a delay with longer timeout
+                            if response.status == 502 and retry < 4:
+                                wait_time = (retry + 1) * 5  # Increase wait time
+                                timeout += 10  # Increase timeout each retry
                                 _LOGGER.warning(
-                                    "Received 502 Bad Gateway, retrying in %s seconds (attempt %s/3)",
+                                    "Received 502 Bad Gateway, retrying in %s seconds with timeout=%s (attempt %s/5)",
                                     wait_time,
+                                    timeout,
                                     retry + 1
                                 )
                                 await asyncio.sleep(wait_time)
@@ -165,7 +170,7 @@ class HemisApiClient:
                         return await response.json()
                 elif method == "POST":
                     async with self.session.post(
-                        url, headers=headers, json=data, timeout=10
+                        url, headers=headers, json=data, timeout=timeout
                     ) as response:
                         if response.status != 200:
                             _LOGGER.error(
@@ -174,12 +179,14 @@ class HemisApiClient:
                                 response.status,
                                 response.reason,
                             )
-                            # If we got a 502, retry after a delay
-                            if response.status == 502 and retry < 2:
-                                wait_time = (retry + 1) * 2
+                            # If we got a 502, retry after a delay with longer timeout
+                            if response.status == 502 and retry < 4:
+                                wait_time = (retry + 1) * 5  # Increase wait time
+                                timeout += 10  # Increase timeout each retry
                                 _LOGGER.warning(
-                                    "Received 502 Bad Gateway, retrying in %s seconds (attempt %s/3)",
+                                    "Received 502 Bad Gateway, retrying in %s seconds with timeout=%s (attempt %s/5)",
                                     wait_time,
+                                    timeout,
                                     retry + 1
                                 )
                                 await asyncio.sleep(wait_time)
@@ -188,7 +195,7 @@ class HemisApiClient:
                         return await response.json()
                 elif method == "PUT":
                     async with self.session.put(
-                        url, headers=headers, json=data, timeout=10
+                        url, headers=headers, json=data, timeout=timeout
                     ) as response:
                         if response.status != 200:
                             _LOGGER.error(
@@ -197,12 +204,14 @@ class HemisApiClient:
                                 response.status,
                                 response.reason,
                             )
-                            # If we got a 502, retry after a delay
-                            if response.status == 502 and retry < 2:
-                                wait_time = (retry + 1) * 2
+                            # If we got a 502, retry after a delay with longer timeout
+                            if response.status == 502 and retry < 4:
+                                wait_time = (retry + 1) * 5  # Increase wait time
+                                timeout += 10  # Increase timeout each retry
                                 _LOGGER.warning(
-                                    "Received 502 Bad Gateway, retrying in %s seconds (attempt %s/3)",
+                                    "Received 502 Bad Gateway, retrying in %s seconds with timeout=%s (attempt %s/5)",
                                     wait_time,
+                                    timeout,
                                     retry + 1
                                 )
                                 await asyncio.sleep(wait_time)
@@ -212,16 +221,18 @@ class HemisApiClient:
                             return {}
                         return await response.json()
             except asyncio.TimeoutError:
-                _LOGGER.error("Timeout calling %s (attempt %s/3)", url, retry + 1)
-                if retry < 2:
-                    wait_time = (retry + 1) * 2
+                _LOGGER.error("Timeout calling %s (attempt %s/5)", url, retry + 1)
+                if retry < 4:
+                    wait_time = (retry + 1) * 5
+                    timeout += 10  # Increase timeout each retry
+                    _LOGGER.warning("Increasing timeout to %s seconds for next attempt", timeout)
                     await asyncio.sleep(wait_time)
                     continue
                 return None
             except (aiohttp.ClientError, asyncio.exceptions.CancelledError) as err:
-                _LOGGER.error("Error calling %s: %s (attempt %s/3)", url, err, retry + 1)
-                if retry < 2:
-                    wait_time = (retry + 1) * 2
+                _LOGGER.error("Error calling %s: %s (attempt %s/5)", url, err, retry + 1)
+                if retry < 4:
+                    wait_time = (retry + 1) * 5
                     await asyncio.sleep(wait_time)
                     continue
                 return None

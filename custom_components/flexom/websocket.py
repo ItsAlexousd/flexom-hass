@@ -63,10 +63,16 @@ class HemisWebSocketClient:
             parsed_url = urllib.parse.urlparse(self.stomp_url)
             _LOGGER.debug("Connecting to WebSocket URL: %s", self.stomp_url)
             
+            # Explicitly create SSL context for wss:// URLs
+            ssl_context = None
+            if parsed_url.scheme == "wss":
+                ssl_context = ssl.create_default_context()
+                _LOGGER.debug("Created SSL context for secure WebSocket connection")
+            
             # Use WebSocketApp from websockets library
             self.ws = await websockets.connect(
                 self.stomp_url,
-                ssl=ssl.create_default_context() if parsed_url.scheme == "https" else None
+                ssl=ssl_context
             )
             
             _LOGGER.debug("WebSocket connection established")
@@ -323,14 +329,33 @@ class HemisWebSocketClient:
                 pass
             self.ws = None
         
-        # Parse WebSocket URL to get host
-        parsed_url = urllib.parse.urlparse(self.stomp_url)
-        host = parsed_url.netloc
+        # Try to connect
+        for retry_count in range(5):  # Try 5 times
+            _LOGGER.debug("Reconnection attempt %d/5", retry_count + 1)
+            
+            # Attempt to reconnect
+            success = await self.connect()
+            
+            if success:
+                _LOGGER.info("Successfully reconnected to Hemis WebSocket")
+                # Start listening
+                await self.start_listening()
+                return
+                
+            # Wait between retries, increasing the wait time
+            wait_time = (retry_count + 1) * 10  # 10, 20, 30, 40, 50 seconds
+            _LOGGER.error(
+                "Failed to reconnect to Hemis WebSocket, will retry in %s seconds (attempt %s/5)", 
+                wait_time, 
+                retry_count + 1
+            )
+            await asyncio.sleep(wait_time)
         
-        # Attempt to reconnect
-        success = await self.connect()
-        
-        if not success:
-            _LOGGER.error("Failed to reconnect to Hemis WebSocket, will retry in %s seconds", self.reconnect_interval)
-            await asyncio.sleep(self.reconnect_interval)
-            asyncio.create_task(self.reconnect())
+        # If we get here, all reconnection attempts failed
+        _LOGGER.error(
+            "Failed to reconnect to Hemis WebSocket after 5 attempts. "
+            "Will try again in %s seconds", 
+            self.reconnect_interval
+        )
+        await asyncio.sleep(self.reconnect_interval)
+        asyncio.create_task(self.reconnect())

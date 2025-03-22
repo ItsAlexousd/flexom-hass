@@ -152,7 +152,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Connect to WebSocket
     if not await ws_client.connect():
-        raise ConfigEntryNotReady("Failed to connect to WebSocket")
+        _LOGGER.warning(
+            "Failed to connect to WebSocket initially. Integration will continue "
+            "to setup but may not receive real-time updates. "
+            "This will be retried automatically in the background."
+        )
+        # Start a background task to retry connection
+        hass.async_create_task(ws_client.reconnect())
+    else:
+        # Start listening for WebSocket messages
+        await ws_client.start_listening()
 
     # Create update coordinator
     coordinator = DataUpdateCoordinator(
@@ -161,9 +170,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         name=f"{DOMAIN}_{building_id}",
         update_method=lambda: None,  # We don't poll, we get updates from WebSocket
     )
-
-    # Start listening for WebSocket messages
-    await ws_client.start_listening()
 
     # Store everything in hass.data for later use
     hass.data[DOMAIN][entry.entry_id] = {

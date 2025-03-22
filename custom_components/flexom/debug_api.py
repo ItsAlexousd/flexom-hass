@@ -142,15 +142,18 @@ async def test_api_connectivity(username: str, password: str) -> Dict[str, Any]:
             # Parse the URL
             from urllib.parse import urlparse
             parsed_url = urlparse(hemis_stomp_url)
-            scheme = "wss" if parsed_url.scheme == "https" else "ws"
-            host = parsed_url.netloc
             
-            # Create full WebSocket URL
-            ws_url = f"{scheme}://{host}{parsed_url.path}"
+            # Create full WebSocket URL - keep the original scheme
+            ws_url = hemis_stomp_url
             _LOGGER.info("Connecting to WebSocket at: %s", ws_url)
             
+            # Create SSL context for wss:// URLs
+            ssl_context = None
+            if parsed_url.scheme == "wss":
+                ssl_context = ssl.create_default_context()
+                _LOGGER.debug("Created SSL context for secure WebSocket connection")
+            
             # Only test connection without actually establishing it
-            ssl_context = ssl.create_default_context() if scheme == "wss" else None
             async with websockets.connect(
                 ws_url, 
                 ssl=ssl_context,
