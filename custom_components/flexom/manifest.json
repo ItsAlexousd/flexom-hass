@@ -1,0 +1,13 @@
+{
+  "domain": "flexom",
+  "name": "Flexom-HASS",
+  "codeowners": ["@ItsAlexousd"],
+  "config_flow": true,
+  "documentation": "https://github.com/ItsAlexousd/flexom-hass",
+  "iot_class": "local_polling",
+  "requirements": [
+    "stomper>=0.4.3", 
+    "websockets>=10.0"
+  ],
+  "version": "0.0.1"
+}
