@@ -69,14 +69,21 @@ class HemisWebSocketClient:
             response = await self.ws.recv()
             _LOGGER.debug("Received from WebSocket: %s", response)
             
-            if not response.startswith("CONNECTED"):
-                _LOGGER.error("Failed to connect to Hemis WebSocket: %s", response)
+            # Convert bytes to string if necessary
+            if isinstance(response, bytes):
+                response_str = response.decode('utf-8')
+            else:
+                response_str = response
+            
+            if not response_str.startswith("CONNECTED"):
+                _LOGGER.error("Failed to connect to Hemis WebSocket: %s", response_str)
                 return False
                 
             # Extract connection ID from response
-            for line in response.splitlines():
+            for line in response_str.splitlines():
                 if line.startswith("session:"):
                     self.connection_id = line.split(":")[1].strip()
+                    _LOGGER.debug("Got session ID: %s", self.connection_id)
             
             # Subscribe to the data topic
             topic = STOMP_TOPIC_DATA.format(building_id=self.building_id)
@@ -147,11 +154,17 @@ class HemisWebSocketClient:
                 if not message:
                     continue
                 
-                _LOGGER.debug("Received WebSocket message: %s", message[:100])
+                # Convert bytes to string if necessary
+                if isinstance(message, bytes):
+                    message_str = message.decode('utf-8')
+                else:
+                    message_str = message
+                    
+                _LOGGER.debug("Received WebSocket message: %s", message_str[:100])
                 
-                if message.startswith("MESSAGE"):
+                if message_str.startswith("MESSAGE"):
                     # Extract message body
-                    parts = message.split("\n\n", 1)
+                    parts = message_str.split("\n\n", 1)
                     if len(parts) < 2:
                         continue
                     
@@ -162,8 +175,8 @@ class HemisWebSocketClient:
                     except json.JSONDecodeError:
                         _LOGGER.error("Invalid JSON received: %s", body)
                 
-                elif message.startswith("ERROR"):
-                    _LOGGER.error("STOMP error: %s", message)
+                elif message_str.startswith("ERROR"):
+                    _LOGGER.error("STOMP error: %s", message_str)
                     self.is_running = False
                     break
         except websockets.ConnectionClosed:
