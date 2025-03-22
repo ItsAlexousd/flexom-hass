@@ -61,8 +61,7 @@ class HemisWebSocketClient:
             # Use WebSocketApp from websockets library
             self.ws = await websockets.connect(
                 self.stomp_url,
-                ssl=parsed_url.scheme == "wss",
-                heartbeat=20
+                ssl=parsed_url.scheme == "wss"
             )
             
             _LOGGER.debug("WebSocket connection established")
