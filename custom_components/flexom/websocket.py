@@ -297,7 +297,7 @@ class HemisWebSocketClient:
         try:
             while True:
                 await asyncio.sleep(15)  # Send heartbeat every 15 seconds
-                if self.ws and not self.ws.closed:
+                if self.ws:
                     try:
                         await self.ws.send("\n")
                         _LOGGER.debug("Sent heartbeat")
@@ -322,7 +322,7 @@ class HemisWebSocketClient:
         _LOGGER.info("Reconnecting to Hemis WebSocket")
         
         # Close existing connection if it exists
-        if self.ws and not self.ws.closed:
+        if self.ws:
             try:
                 await self.ws.close()
             except Exception:
