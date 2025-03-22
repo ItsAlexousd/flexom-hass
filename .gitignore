@@ -32,3 +32,5 @@ ENV/
 .vscode/
 *.swp
 *.swo
+
+flexom-lib/

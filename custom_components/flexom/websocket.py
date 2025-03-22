@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 import urllib.parse
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, List
 
 import stomper
 import websockets
@@ -12,6 +12,20 @@ from homeassistant.core import HomeAssistant
 from .const import STOMP_TOPIC_DATA
 
 _LOGGER = logging.getLogger(__name__)
+
+FACTOR_TYPES = ["BRI", "BRIEXT", "TMP"]
+EVENT_TYPES = [
+    "ACTUATOR_TARGET_STATE",
+    "ACTUATOR_HARDWARE_STATE",
+    "ACTUATOR_CURRENT_STATE",
+    "SENSOR_STATE",
+    "IT_STATE",
+    "FACTOR_TARGET_STATE",
+    "FACTOR_CURRENT_STATE",
+    "OBJECTIVE_STATE",
+    "DATA_PROVIDER",
+    "ENTITY_MANAGEMENT"
+]
 
 class HemisWebSocketClient:
     """WebSocket client for Hemis."""
@@ -32,6 +46,7 @@ class HemisWebSocketClient:
         self.message_callback = message_callback
         self.ws: Optional[websockets.WebSocketClientProtocol] = None
         self.task: Optional[asyncio.Task] = None
+        self.heartbeat_task: Optional[asyncio.Task] = None
         self.is_running = False
         self.subscription_id = "1"
         self.connection_id = None
@@ -46,7 +61,8 @@ class HemisWebSocketClient:
             # Use WebSocketApp from websockets library
             self.ws = await websockets.connect(
                 self.stomp_url,
-                ssl=parsed_url.scheme == "wss"
+                ssl=parsed_url.scheme == "wss",
+                heartbeat=20
             )
             
             _LOGGER.debug("WebSocket connection established")
@@ -59,6 +75,7 @@ class HemisWebSocketClient:
                 "host": parsed_url.netloc,
                 "login": self.building_id,
                 "passcode": self.token,
+                "heart-beat": "20000,20000"
             }
             
             connect_str = connect_frame.pack()
@@ -100,6 +117,10 @@ class HemisWebSocketClient:
             subscribe_str = subscribe_frame.pack()
             await self.ws.send(subscribe_str)
             
+            # Start heartbeat task
+            if self.heartbeat_task is None:
+                self.heartbeat_task = asyncio.create_task(self._send_heartbeats())
+            
             _LOGGER.info("Connected to Hemis WebSocket and subscribed to topics")
             return True
             
@@ -109,6 +130,14 @@ class HemisWebSocketClient:
 
     async def disconnect(self) -> None:
         """Disconnect from the WebSocket server."""
+        if self.heartbeat_task:
+            self.heartbeat_task.cancel()
+            try:
+                await self.heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            self.heartbeat_task = None
+            
         if self.task:
             self.is_running = False
             self.task.cancel()
@@ -128,6 +157,7 @@ class HemisWebSocketClient:
             try:
                 await self.ws.send(disconnect_frame.pack())
                 await self.ws.close()
+                _LOGGER.info("Disconnected from Hemis WebSocket")
             except Exception as err:
                 _LOGGER.error("Error disconnecting from Hemis WebSocket: %s", err)
             finally:
@@ -172,27 +202,68 @@ class HemisWebSocketClient:
                             
                         body = parts[1].rstrip('\x00')
                         try:
-                            data = json.loads(body)
-                            # Fix for duplicate type field - the message is valid JSON but has duplicate keys
-                            _LOGGER.debug("Processing message: %s", data)
-                            self.hass.async_create_task(self.message_callback(data))
+                            # Nettoyage du corps JSON
+                            if "}" in body:
+                                # Trouver la fin du premier objet JSON (le contenu valide)
+                                json_end = body.find("}") + 1
+                                if json_end > 0:
+                                    cleaned_body = body[:json_end]
+                                    data = json.loads(cleaned_body)
+                                    _LOGGER.debug("Successfully parsed message: %s", data)
+                                    
+                                    # Ne traiter que les types d'événements connus
+                                    if "type" in data and data["type"] in EVENT_TYPES:
+                                        self.hass.async_create_task(self.message_callback(data))
+                                    else:
+                                        _LOGGER.debug("Ignoring unknown event type: %s", data.get("type"))
+                                else:
+                                    _LOGGER.warning("Could not find JSON end marker in body")
+                            else:
+                                _LOGGER.warning("No JSON object found in message body")
                         except json.JSONDecodeError as e:
                             _LOGGER.error("Invalid JSON received: %s - Error: %s", body, str(e))
                     except Exception as e:
-                        _LOGGER.error("Error processing message: %s - Error: %s", message_str, str(e))
+                        _LOGGER.error("Error processing message: %s - Error: %s", message_str[:100], str(e))
                 
                 elif message_str.startswith("ERROR"):
                     _LOGGER.error("STOMP error: %s", message_str)
                     self.is_running = False
                     break
+                    
+                # Réinitialiser la connexion si nécessaire
+                elif message_str.startswith("RECEIPT"):
+                    _LOGGER.debug("Received RECEIPT frame: %s", message_str)
+                
         except websockets.ConnectionClosed:
-            _LOGGER.error("WebSocket connection closed")
+            _LOGGER.warning("WebSocket connection closed, attempting reconnect in 5 seconds")
+            await asyncio.sleep(5)
+            # Tenter de se reconnecter
+            if await self.connect():
+                self.is_running = True
+                self.task = asyncio.create_task(self._listen())
         except Exception as err:
             _LOGGER.error("Error in WebSocket listener: %s", err)
         finally:
             self.is_running = False
             
-    async def send_heartbeat(self) -> None:
-        """Send a heartbeat to keep the connection alive."""
-        if self.ws and not self.ws.closed:
-            await self.ws.send("\n")
+    async def _send_heartbeats(self) -> None:
+        """Send heartbeats to keep the connection alive."""
+        try:
+            while True:
+                await asyncio.sleep(15)  # Send heartbeat every 15 seconds
+                if self.ws and not self.ws.closed:
+                    try:
+                        await self.ws.send("\n")
+                        _LOGGER.debug("Sent heartbeat")
+                    except Exception as err:
+                        _LOGGER.error("Error sending heartbeat: %s", err)
+                        break
+        except asyncio.CancelledError:
+            _LOGGER.debug("Heartbeat task cancelled")
+        except Exception as err:
+            _LOGGER.error("Error in heartbeat task: %s", err)
+            
+    def update_token(self, new_token: str) -> None:
+        """Update the authentication token."""
+        self.token = new_token
+        _LOGGER.debug("Updated WebSocket token")
