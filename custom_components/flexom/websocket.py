@@ -163,29 +163,23 @@ class HemisWebSocketClient:
                 _LOGGER.debug("Received WebSocket message: %s", message_str[:100])
                 
                 if message_str.startswith("MESSAGE"):
+                    # Extract message body using a manual split approach
                     try:
-                        # Parse the STOMP frame
-                        frames = stomper.Frame.parse(message_str)
-                        if not frames:
+                        # Split into headers and body - the body comes after a blank line
+                        parts = message_str.split("\n\n", 1)
+                        if len(parts) < 2:
                             continue
                             
-                        frame = frames[0]
-                        
-                        # The body is the content after headers
-                        if frame.body:
-                            body = frame.body.rstrip('\x00')
-                            try:
-                                data = json.loads(body)
-                                # Fix for duplicate type field
-                                if 'type' in data and data.get('type') == data.get('type'):
-                                    # Keep only one type field
-                                    data_copy = data.copy()
-                                    _LOGGER.debug("Processing message: %s", data_copy)
-                                    self.hass.async_create_task(self.message_callback(data_copy))
-                            except json.JSONDecodeError as e:
-                                _LOGGER.error("Invalid JSON received: %s - Error: %s", body, str(e))
+                        body = parts[1].rstrip('\x00')
+                        try:
+                            data = json.loads(body)
+                            # Fix for duplicate type field - the message is valid JSON but has duplicate keys
+                            _LOGGER.debug("Processing message: %s", data)
+                            self.hass.async_create_task(self.message_callback(data))
+                        except json.JSONDecodeError as e:
+                            _LOGGER.error("Invalid JSON received: %s - Error: %s", body, str(e))
                     except Exception as e:
-                        _LOGGER.error("Error parsing STOMP frame: %s - Error: %s", message_str, str(e))
+                        _LOGGER.error("Error processing message: %s - Error: %s", message_str, str(e))
                 
                 elif message_str.startswith("ERROR"):
                     _LOGGER.error("STOMP error: %s", message_str)
