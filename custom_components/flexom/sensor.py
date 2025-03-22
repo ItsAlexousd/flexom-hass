@@ -55,9 +55,15 @@ async def async_setup_entry(
         hemis_client = hass.data[DOMAIN][config_entry.entry_id]["hemis_client"]
         coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
         
-        # Get all zones to create sensors for factors
+        # Fetch zones from API
         _LOGGER.debug("Fetching zones from Hemis API")
         zones = await hemis_client.get_zones()
+        
+        if zones is None:
+            _LOGGER.warning("No zones found (API returned None)")
+            # Return early instead of raising an error
+            return
+        
         _LOGGER.debug("Found %d zones: %s", len(zones), [f"{z.get('id')} - {z.get('name')}" for z in zones])
         
         entities = []

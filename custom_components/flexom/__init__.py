@@ -84,7 +84,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hemis_client = HemisApiClient(
         session,
         hemis_base_url,
-        hemisphere_client.hemisphere_token
+        hemisphere_client.hemis_token if hasattr(hemisphere_client, 'hemis_token') else hemisphere_client.hemisphere_token
     )
     
     # Test API connectivity - but don't fail if it doesn't work initially

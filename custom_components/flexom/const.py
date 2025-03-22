@@ -11,7 +11,7 @@ CONF_PASSWORD: Final = "password"
 HEMISPHERE_URL: Final = "https://hemisphere.ubiant.com"
 HEMISPHERE_SIGNIN_URL: Final = "/users/signin"
 HEMISPHERE_BUILDINGS_URL: Final = "/buildings/mine/infos"
-HEMIS_BASE_URL_TEMPLATE: Final = "https://{}.eu-west.hemis.io/hemis/rest"
+HEMIS_BASE_URL_TEMPLATE: Final = "https://{}.{}.hemis.io/hemis/rest"
 
 # WebSocket topics
 STOMP_TOPIC_DATA: Final = "jms.topic.{building_id}.data"

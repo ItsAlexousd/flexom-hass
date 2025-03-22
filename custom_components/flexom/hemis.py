@@ -139,6 +139,9 @@ class HemisApiClient:
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json",
         })
+        
+        # Print the first 10 characters of the token for debugging
+        _LOGGER.debug("Using token for API call: %s...", self.token[:10] if self.token else "None")
 
         # Add longer timeout for potentially slow servers
         timeout = 30
