@@ -160,6 +160,17 @@ class HemisApiClient:
                                 response.status,
                                 response.reason,
                             )
+                            # Handle 401 Unauthorized - could be token expiration
+                            if response.status == 401 and retry < 4:
+                                wait_time = (retry + 1) * 2
+                                _LOGGER.warning(
+                                    "Received 401 Unauthorized, retrying in %s seconds (attempt %s/5)",
+                                    wait_time,
+                                    retry + 1
+                                )
+                                # Could add token refresh logic here
+                                await asyncio.sleep(wait_time)
+                                continue
                             # If we got a 502, retry after a delay with longer timeout
                             if response.status == 502 and retry < 4:
                                 wait_time = (retry + 1) * 5  # Increase wait time
@@ -197,6 +208,17 @@ class HemisApiClient:
                                 response.status,
                                 response.reason,
                             )
+                            # Handle 401 Unauthorized - could be token expiration
+                            if response.status == 401 and retry < 4:
+                                wait_time = (retry + 1) * 2
+                                _LOGGER.warning(
+                                    "Received 401 Unauthorized, retrying in %s seconds (attempt %s/5)",
+                                    wait_time,
+                                    retry + 1
+                                )
+                                # Could add token refresh logic here
+                                await asyncio.sleep(wait_time)
+                                continue
                             # If we got a 502, retry after a delay with longer timeout
                             if response.status == 502 and retry < 4:
                                 wait_time = (retry + 1) * 5  # Increase wait time
@@ -234,6 +256,17 @@ class HemisApiClient:
                                 response.status,
                                 response.reason,
                             )
+                            # Handle 401 Unauthorized - could be token expiration
+                            if response.status == 401 and retry < 4:
+                                wait_time = (retry + 1) * 2
+                                _LOGGER.warning(
+                                    "Received 401 Unauthorized, retrying in %s seconds (attempt %s/5)",
+                                    wait_time,
+                                    retry + 1
+                                )
+                                # Could add token refresh logic here
+                                await asyncio.sleep(wait_time)
+                                continue
                             # If we got a 502, retry after a delay with longer timeout
                             if response.status == 502 and retry < 4:
                                 wait_time = (retry + 1) * 5  # Increase wait time

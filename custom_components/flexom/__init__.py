@@ -84,8 +84,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hemis_client = HemisApiClient(
         session,
         hemis_base_url,
-        hemisphere_client.hemis_token if hasattr(hemisphere_client, 'hemis_token') else hemisphere_client.hemisphere_token
+        hemisphere_client.hemis_token if hasattr(hemisphere_client, 'hemis_token') and hemisphere_client.hemis_token else hemisphere_client.hemisphere_token
     )
+    
+    # Get a fresh auth token from building info
+    try:
+        # Get building info from Hemisphere API to get fresh token
+        async with session.get(
+            f"{hemisphere_client.hemis_base_url}/building",
+            headers={"Authorization": f"Bearer {hemisphere_client.hemisphere_token}"},
+            timeout=30
+        ) as response:
+            if response.status == 200:
+                building_info = await response.json()
+                if building_info and "authorizationToken" in building_info:
+                    # Update the token
+                    new_token = building_info["authorizationToken"]
+                    _LOGGER.info("Retrieved fresh authentication token from building info")
+                    hemis_client.token = new_token
+                    hemisphere_client.hemis_token = new_token
+            else:
+                _LOGGER.warning("Failed to get fresh token: %s %s", response.status, response.reason)
+    except Exception as err:
+        _LOGGER.warning("Error getting fresh token: %s", err)
     
     # Test API connectivity - but don't fail if it doesn't work initially
     try:
@@ -141,12 +162,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as err:
             _LOGGER.error("Error processing WebSocket message: %s", err, exc_info=True)
 
-    # Create WebSocket client
+    # Create update coordinator first
+    coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        name=f"{DOMAIN}_{building_id}",
+        update_method=lambda: None,  # We don't poll, we get updates from WebSocket
+    )
+
+    # Create WebSocket client - use the most up-to-date token
     ws_client = HemisWebSocketClient(
         hass,
         hemis_stomp_url,
         building_id,
-        hemisphere_client.hemisphere_token,
+        hemis_client.token,  # Use the updated token from Hemis client
         handle_ws_message
     )
 
@@ -162,14 +191,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     else:
         # Start listening for WebSocket messages
         await ws_client.start_listening()
-
-    # Create update coordinator
-    coordinator = DataUpdateCoordinator(
-        hass,
-        _LOGGER,
-        name=f"{DOMAIN}_{building_id}",
-        update_method=lambda: None,  # We don't poll, we get updates from WebSocket
-    )
 
     # Store everything in hass.data for later use
     hass.data[DOMAIN][entry.entry_id] = {
