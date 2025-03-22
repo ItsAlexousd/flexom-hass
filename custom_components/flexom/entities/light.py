@@ -29,38 +29,64 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Flexom Light from a config entry."""
-    hemis_client = hass.data[DOMAIN][config_entry.entry_id]["hemis_client"]
-    coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
-    
-    # Get all light actuators
-    _LOGGER.debug("Setting up Flexom Light entities")
-    actuators = await hemis_client.get_light_actuators()
-    _LOGGER.debug("Found %d light actuators", len(actuators))
-    
-    entities = []
-    for actuator in actuators:
-        _LOGGER.debug("Processing actuator: %s - %s (zoneId: %s)", 
-                     actuator.get("id"), 
-                     actuator.get("name"),
-                     actuator.get("zoneId"))
-        # Find the BRI state in the actuator states
-        for state in actuator.get("states", []):
-            if state.get("factorId") == FACTOR_BRIGHTNESS:
-                _LOGGER.debug("Found BRI state for actuator %s: %s", 
-                             actuator.get("id"), 
-                             state)
-                entities.append(
-                    FlexomLight(
-                        hemis_client,
-                        coordinator,
-                        actuator,
-                        state
+    try:
+        _LOGGER.info("Starting setup of Flexom Light entities")
+        hemis_client = hass.data[DOMAIN][config_entry.entry_id]["hemis_client"]
+        coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+        
+        # Get all light actuators
+        _LOGGER.debug("Fetching light actuators from Hemis API")
+        actuators = await hemis_client.get_light_actuators()
+        
+        if actuators is None:
+            _LOGGER.error("Failed to retrieve actuators from API")
+            return
+
+        _LOGGER.debug("Found %d light actuators: %s", 
+                     len(actuators), 
+                     [f"{a.get('id')} - {a.get('name')}" for a in actuators])
+        
+        entities = []
+        for actuator in actuators:
+            actuator_id = actuator.get("id")
+            actuator_name = actuator.get("name", "Unknown")
+            zone_id = actuator.get("zoneId")
+            
+            _LOGGER.debug("Processing actuator: %s - %s (zoneId: %s)", 
+                         actuator_id, 
+                         actuator_name,
+                         zone_id)
+                         
+            states = actuator.get("states", [])
+            if not states:
+                _LOGGER.warning("Actuator %s has no states", actuator_id)
+                
+            # Find the BRI state in the actuator states
+            for state in states:
+                state_factor = state.get("factorId")
+                if state_factor == FACTOR_BRIGHTNESS:
+                    _LOGGER.debug("Found BRI state for actuator %s: %s", 
+                                 actuator_id, 
+                                 state)
+                    entities.append(
+                        FlexomLight(
+                            hemis_client,
+                            coordinator,
+                            actuator,
+                            state
+                        )
                     )
-                )
-                break
-    
-    _LOGGER.debug("Adding %d light entities", len(entities))
-    async_add_entities(entities)
+                    break
+            else:
+                _LOGGER.warning("No BRI state found for actuator %s", actuator_id)
+        
+        _LOGGER.debug("Adding %d light entities", len(entities))
+        if entities:
+            async_add_entities(entities)
+        else:
+            _LOGGER.warning("No light entities found to add")
+    except Exception as err:
+        _LOGGER.error("Failed to set up Flexom lights: %s", err, exc_info=True)
 
 
 class FlexomLight(CoordinatorEntity, LightEntity):

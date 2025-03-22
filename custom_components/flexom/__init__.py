@@ -25,6 +25,7 @@ from .const import (
 from .hemisphere import HemisphereApiClient
 from .hemis import HemisApiClient
 from .websocket import HemisWebSocketClient
+from .debug_api import test_api_connectivity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,6 +41,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Get credentials from the config flow
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
+
+    # Run API diagnostics
+    await test_api_connectivity(username, password)
 
     # Create API clients
     session = async_get_clientsession(hass)
@@ -110,7 +114,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
 
     # Set up all platforms
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    try:
+        _LOGGER.info("Setting up platforms: %s", PLATFORMS)
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        # Log success
+        _LOGGER.info("Successfully set up platforms")
+    except Exception as err:
+        _LOGGER.error("Error setting up platforms: %s", err, exc_info=True)
+        # Log additional context
+        _LOGGER.error("Entry data: %s", entry.data)
+        _LOGGER.error("Building ID: %s", building_id)
+        raise
 
     # Define update listener to reload entry when options change
     entry.async_on_unload(entry.add_update_listener(update_listener))

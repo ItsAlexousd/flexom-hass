@@ -50,48 +50,64 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Flexom Sensor from a config entry."""
-    hemis_client = hass.data[DOMAIN][config_entry.entry_id]["hemis_client"]
-    coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
-    
-    # Get all zones to create sensors for factors
-    _LOGGER.debug("Setting up Flexom Factor Sensors")
-    zones = await hemis_client.get_zones()
-    _LOGGER.debug("Found %d zones", len(zones))
-    
-    entities = []
-    
-    # Create a sensor for each zone and factor combination
-    for zone in zones:
-        zone_id = zone.get("id")
-        zone_name = zone.get("name", "Unknown Zone")
+    try:
+        _LOGGER.info("Starting setup of Flexom Factor Sensors")
+        hemis_client = hass.data[DOMAIN][config_entry.entry_id]["hemis_client"]
+        coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
         
-        if not zone_id:
-            continue
+        # Get all zones to create sensors for factors
+        _LOGGER.debug("Fetching zones from Hemis API")
+        zones = await hemis_client.get_zones()
+        _LOGGER.debug("Found %d zones: %s", len(zones), [f"{z.get('id')} - {z.get('name')}" for z in zones])
+        
+        entities = []
+        
+        # Create a sensor for each zone and factor combination
+        for zone in zones:
+            zone_id = zone.get("id")
+            zone_name = zone.get("name", "Unknown Zone")
             
-        _LOGGER.debug("Creating sensors for zone: %s - %s", zone_id, zone_name)
-        
-        # Get factors for this zone
-        zone_factors = await hemis_client.get_zone_factors(zone_id)
-        _LOGGER.debug("Found %d factors for zone %s", len(zone_factors), zone_id)
-        
-        for factor in zone_factors:
-            factor_id = factor.get("id")
-            if not factor_id:
+            if not zone_id:
+                _LOGGER.warning("Skipping zone without ID: %s", zone)
                 continue
                 
-            if factor_id in [FACTOR_BRIGHTNESS, FACTOR_BRIGHTNESS_EXT, FACTOR_TEMPERATURE]:
-                _LOGGER.debug("Creating sensor for factor %s in zone %s", factor_id, zone_id)
-                entities.append(
-                    FlexomFactorSensor(
-                        hemis_client,
-                        coordinator,
-                        zone,
-                        factor_id
-                    )
-                )
-    
-    _LOGGER.debug("Adding %d factor sensors", len(entities))
-    async_add_entities(entities)
+            _LOGGER.debug("Creating sensors for zone: %s - %s", zone_id, zone_name)
+            
+            try:
+                # Get factors for this zone
+                _LOGGER.debug("Fetching factors for zone %s", zone_id)
+                zone_factors = await hemis_client.get_zone_factors(zone_id)
+                _LOGGER.debug("Found %d factors for zone %s: %s", 
+                          len(zone_factors), 
+                          zone_id, 
+                          [f"{f.get('id')}" for f in zone_factors])
+                
+                for factor in zone_factors:
+                    factor_id = factor.get("id")
+                    if not factor_id:
+                        _LOGGER.warning("Skipping factor without ID: %s", factor)
+                        continue
+                        
+                    if factor_id in [FACTOR_BRIGHTNESS, FACTOR_BRIGHTNESS_EXT, FACTOR_TEMPERATURE]:
+                        _LOGGER.debug("Creating sensor for factor %s in zone %s", factor_id, zone_id)
+                        entities.append(
+                            FlexomFactorSensor(
+                                hemis_client,
+                                coordinator,
+                                zone,
+                                factor_id
+                            )
+                        )
+            except Exception as zone_err:
+                _LOGGER.error("Error processing zone %s: %s", zone_id, zone_err, exc_info=True)
+        
+        _LOGGER.debug("Adding %d factor sensors", len(entities))
+        if entities:
+            async_add_entities(entities)
+        else:
+            _LOGGER.warning("No entities found to add")
+    except Exception as err:
+        _LOGGER.error("Failed to set up Flexom sensors: %s", err, exc_info=True)
 
 
 class FlexomFactorSensor(CoordinatorEntity, SensorEntity):
