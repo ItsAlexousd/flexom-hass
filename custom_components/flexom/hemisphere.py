@@ -9,6 +9,7 @@ import asyncio
 from .const import (
     HEMISPHERE_SIGNIN_URL,
     HEMISPHERE_BUILDINGS_URL,
+    HEMISPHERE_URL,
 )
 
 _LOGGER = logging.getLogger(__name__)
