@@ -212,7 +212,8 @@ class HemisWebSocketClient:
                                     
                                     # Ne traiter que les types d'événements connus
                                     if "type" in data and data["type"] in EVENT_TYPES:
-                                        self.hass.async_create_task(self.message_callback(data))
+                                        # Appel direct au callback sans créer de tâche
+                                        self.message_callback(data)
                                     else:
                                         _LOGGER.debug("Ignoring unknown event type: %s", data.get("type"))
                                 else:
