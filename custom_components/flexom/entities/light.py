@@ -18,7 +18,7 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
-from ..const import DOMAIN, FACTOR_BRIGHTNESS, WS_TYPE_ACTUATOR_HARDWARE_STATE
+from ..const import DOMAIN, FACTOR_BRIGHTNESS, WS_TYPE_ACTUATOR_HARDWARE_STATE, WS_TYPE_FACTOR_TARGET_STATE
 from ..hemis import HemisApiClient
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,13 +33,22 @@ async def async_setup_entry(
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
     
     # Get all light actuators
+    _LOGGER.debug("Setting up Flexom Light entities")
     actuators = await hemis_client.get_light_actuators()
+    _LOGGER.debug("Found %d light actuators", len(actuators))
     
     entities = []
     for actuator in actuators:
+        _LOGGER.debug("Processing actuator: %s - %s (zoneId: %s)", 
+                     actuator.get("id"), 
+                     actuator.get("name"),
+                     actuator.get("zoneId"))
         # Find the BRI state in the actuator states
         for state in actuator.get("states", []):
             if state.get("factorId") == FACTOR_BRIGHTNESS:
+                _LOGGER.debug("Found BRI state for actuator %s: %s", 
+                             actuator.get("id"), 
+                             state)
                 entities.append(
                     FlexomLight(
                         hemis_client,
@@ -50,6 +59,7 @@ async def async_setup_entry(
                 )
                 break
     
+    _LOGGER.debug("Adding %d light entities", len(entities))
     async_add_entities(entities)
 
 
@@ -131,6 +141,7 @@ class FlexomLight(CoordinatorEntity, LightEntity):
             
         # Find actuator state updates from WebSocket data
         for ws_data in self.coordinator.data:
+            # Check for ACTUATOR_HARDWARE_STATE type messages
             if (
                 ws_data.get("type") == WS_TYPE_ACTUATOR_HARDWARE_STATE
                 and ws_data.get("factorId") == FACTOR_BRIGHTNESS
@@ -145,5 +156,24 @@ class FlexomLight(CoordinatorEntity, LightEntity):
                         self._state = self._brightness > 0
                         self.async_write_ha_state()
                         break
+            
+            # Check for FACTOR_TARGET_STATE type messages - these come directly from the server
+            elif (
+                ws_data.get("type") == WS_TYPE_FACTOR_TARGET_STATE
+                and ws_data.get("factorId") == FACTOR_BRIGHTNESS
+                and ws_data.get("zoneId") == self.actuator.get("zoneId")
+            ):
+                value = ws_data.get("value")
+                if value is not None:
+                    self._brightness = float(value)
+                    self._state = self._brightness > 0
+                    self.async_write_ha_state()
+                    _LOGGER.debug(
+                        "Updated light %s from FACTOR_TARGET_STATE: brightness=%s, state=%s",
+                        self._id,
+                        self._brightness,
+                        self._state
+                    )
+                    break
         
         super()._handle_coordinator_update()

@@ -30,7 +30,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # List the platforms that we want to support
 # We'll start with just lights, and add cover and climate later
-PLATFORMS = [Platform.LIGHT]
+PLATFORMS = [Platform.LIGHT, Platform.SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

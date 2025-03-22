@@ -45,11 +45,20 @@ class HemisApiClient:
 
     async def get_light_actuators(self) -> List[Dict[str, Any]]:
         """Get all light actuators."""
+        _LOGGER.debug("Fetching light actuators")
         actuators = await self.get_actuators()
-        return [
+        _LOGGER.debug("Found %d actuators in total", len(actuators))
+        
+        light_actuators = [
             actuator for actuator in actuators
             if any(state["factorId"] == FACTOR_BRIGHTNESS for state in actuator.get("states", []))
         ]
+        
+        _LOGGER.debug("Found %d light actuators: %s", 
+                    len(light_actuators), 
+                    [f"{a.get('id')} - {a.get('name')}" for a in light_actuators])
+        
+        return light_actuators
 
     async def get_cover_actuators(self) -> List[Dict[str, Any]]:
         """Get all cover actuators."""
@@ -128,6 +137,10 @@ class HemisApiClient:
             "Content-Type": "application/json",
         }
         
+        _LOGGER.debug("API request: %s %s", method, url)
+        if data:
+            _LOGGER.debug("Request data: %s", data)
+            
         try:
             async with async_timeout.timeout(10):
                 if method == "GET":
@@ -150,8 +163,10 @@ class HemisApiClient:
                 
                 if response.status == 204:  # No content
                     return {}
-                    
-                return await response.json()
+                
+                result = await response.json()
+                _LOGGER.debug("API response: %s", result)
+                return result
                 
         except aiohttp.ClientError as err:
             _LOGGER.error("Error connecting to Hemis API: %s", err)
