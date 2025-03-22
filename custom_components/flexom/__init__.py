@@ -182,6 +182,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Set up all platforms
     try:
         _LOGGER.info("Setting up platforms: %s", PLATFORMS)
+        
+        # Log more detailed info about what we're passing to the platforms
+        _LOGGER.debug("Hemis base URL for platform setup: %s", hemis_base_url)
+        _LOGGER.debug("Building ID for platform setup: %s", building_id)
+        _LOGGER.debug("WebSocket URL for platform setup: %s", hemis_stomp_url)
+        
+        # Try to get actuators to verify API access
+        actuators = await hemis_client.get_actuators()
+        if actuators is None:
+            _LOGGER.error("Could not get actuators from API - API access may be failing")
+        else:
+            _LOGGER.info("API access verified - found %d actuators", len(actuators))
+            # List actual actuator info
+            for i, actuator in enumerate(actuators[:5]):  # Show first 5 only to avoid log spam
+                _LOGGER.info("Actuator %d/%d: id=%s, name=%s, type=%s", 
+                             i+1, len(actuators),
+                             actuator.get("id"), 
+                             actuator.get("name"),
+                             actuator.get("typeName"))
+                
+                # Show actuator states
+                states = actuator.get("states", [])
+                if states:
+                    _LOGGER.info("  States for %s: %s", 
+                                 actuator.get("name"),
+                                 ", ".join(f"{s.get('factorId')}={s.get('value')}" for s in states[:3]))
+        
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         # Log success
         _LOGGER.info("Successfully set up platforms")

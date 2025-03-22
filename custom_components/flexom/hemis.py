@@ -132,6 +132,8 @@ class HemisApiClient:
     async def _api_call(self, endpoint, method="GET", data=None, headers=None):
         """Make an API call to the Hemis API."""
         url = f"{self.hemis_base_url}{endpoint}"
+        _LOGGER.debug("API call: %s %s", method, url)
+        
         headers = headers or {}
         headers.update({
             "Authorization": f"Bearer {self.token}",
@@ -144,6 +146,7 @@ class HemisApiClient:
         for retry in range(5):  # Increase retries to 5
             try:
                 if method == "GET":
+                    _LOGGER.debug("Sending GET request to %s (attempt %s/5)", url, retry + 1)
                     async with self.session.get(
                         url, headers=headers, timeout=timeout
                     ) as response:
@@ -167,8 +170,20 @@ class HemisApiClient:
                                 await asyncio.sleep(wait_time)
                                 continue
                             return None
-                        return await response.json()
+                        
+                        # Log success
+                        _LOGGER.debug("Successful response from %s", url)
+                        
+                        # Parse JSON response
+                        try:
+                            data = await response.json()
+                            _LOGGER.debug("Parsed JSON response from %s: %d items", url, len(data) if isinstance(data, list) else 1)
+                            return data
+                        except Exception as err:
+                            _LOGGER.error("Error parsing JSON from %s: %s", url, err)
+                            return None
                 elif method == "POST":
+                    _LOGGER.debug("Sending POST request to %s (attempt %s/5)", url, retry + 1)
                     async with self.session.post(
                         url, headers=headers, json=data, timeout=timeout
                     ) as response:
@@ -192,8 +207,20 @@ class HemisApiClient:
                                 await asyncio.sleep(wait_time)
                                 continue
                             return None
-                        return await response.json()
+                        
+                        # Log success
+                        _LOGGER.debug("Successful POST response from %s", url)
+                        
+                        # Parse JSON response
+                        try:
+                            data = await response.json()
+                            _LOGGER.debug("Parsed JSON response from POST to %s", url)
+                            return data
+                        except Exception as err:
+                            _LOGGER.error("Error parsing JSON from POST to %s: %s", url, err)
+                            return None
                 elif method == "PUT":
+                    _LOGGER.debug("Sending PUT request to %s (attempt %s/5)", url, retry + 1)
                     async with self.session.put(
                         url, headers=headers, json=data, timeout=timeout
                     ) as response:
@@ -217,9 +244,22 @@ class HemisApiClient:
                                 await asyncio.sleep(wait_time)
                                 continue
                             return None
+                        
+                        # Log success
+                        _LOGGER.debug("Successful PUT response from %s", url)
+                        
+                        # Parse JSON response if available
                         if response.status == 204:  # No content
+                            _LOGGER.debug("No content in PUT response (status 204)")
                             return {}
-                        return await response.json()
+                            
+                        try:
+                            data = await response.json()
+                            _LOGGER.debug("Parsed JSON response from PUT to %s", url)
+                            return data
+                        except Exception as err:
+                            _LOGGER.error("Error parsing JSON from PUT to %s: %s", url, err)
+                            return None
             except asyncio.TimeoutError:
                 _LOGGER.error("Timeout calling %s (attempt %s/5)", url, retry + 1)
                 if retry < 4:

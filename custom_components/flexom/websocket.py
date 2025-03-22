@@ -235,8 +235,8 @@ class HemisWebSocketClient:
                                         # Only process known event types
                                         if "type" in data and data["type"] in EVENT_TYPES:
                                             _LOGGER.debug("Processing message of type: %s", data["type"])
-                                            # Call the callback directly
-                                            await self.message_callback(data)
+                                            # Call the callback directly without await
+                                            self.message_callback(data)
                                         else:
                                             _LOGGER.debug("Ignoring unknown event type: %s", data.get("type"))
                                     else:

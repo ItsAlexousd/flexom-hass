@@ -36,14 +36,41 @@ async def async_setup_entry(
     coordinator = data["coordinator"]
     hemis_client = data["hemis_client"]
     
+    # Verify that our coordinator and client are valid
+    _LOGGER.debug("Verification - Coordinator: %s, Hemis client: %s", 
+                 coordinator is not None, 
+                 hemis_client is not None)
+    
     try:
         # Fetch light actuators from Hemis API
+        _LOGGER.info("Fetching light actuators from Hemis API")
         light_actuators = await hemis_client.get_light_actuators()
+        
+        if light_actuators is None:
+            _LOGGER.error("Failed to get light actuators from Hemis API (returned None)")
+            return
+            
         if not light_actuators:
-            _LOGGER.info("No light actuators found")
+            _LOGGER.info("No light actuators found (empty list)")
             return
             
         _LOGGER.info("Found %d light actuators", len(light_actuators))
+        
+        # Log details of the first few actuators
+        for i, actuator in enumerate(light_actuators[:3]):  # Log first 3 to avoid spam
+            _LOGGER.info("Light actuator %d: id=%s, name=%s", 
+                         i+1, 
+                         actuator.get("id"), 
+                         actuator.get("name"))
+            
+            # Check if actuator has states
+            states = actuator.get("states", [])
+            if not states:
+                _LOGGER.warning("Actuator %s has no states defined", actuator.get("name"))
+            else:
+                _LOGGER.info("States for %s: %s", 
+                         actuator.get("name"), 
+                         ", ".join(f"{s.get('factorId')}={s.get('value')}" for s in states[:3]))
         
         # Create entities
         entities = []
@@ -53,9 +80,18 @@ async def async_setup_entry(
                 actuator_name = actuator.get("name")
                 _LOGGER.debug("Creating light entity for: %s (%s)", actuator_name, actuator_id)
                 
+                # Verify that the actuator has the required fields
+                if actuator_id is None:
+                    _LOGGER.error("Actuator is missing ID field, skipping")
+                    continue
+                    
+                if actuator_name is None:
+                    _LOGGER.warning("Actuator %s is missing name, using ID instead", actuator_id)
+                    actuator_name = f"Light {actuator_id}"
+                
                 # Verify that the actuator has the required states
                 has_brightness = any(
-                    state["factorId"] == FACTOR_BRIGHTNESS for state in actuator.get("states", [])
+                    state.get("factorId") == FACTOR_BRIGHTNESS for state in actuator.get("states", [])
                 )
                 
                 if not has_brightness:
@@ -67,6 +103,7 @@ async def async_setup_entry(
                     continue
                     
                 # Create the entity
+                _LOGGER.debug("Creating FlexomLight entity with %s", actuator_name)
                 entities.append(
                     FlexomLight(
                         coordinator=coordinator,
@@ -74,6 +111,7 @@ async def async_setup_entry(
                         actuator=actuator,
                     )
                 )
+                _LOGGER.debug("Successfully created entity for %s", actuator_name)
             except Exception as err:
                 _LOGGER.error(
                     "Error creating light entity for %s: %s",
@@ -84,7 +122,7 @@ async def async_setup_entry(
         
         # Add entities to Home Assistant
         if entities:
-            _LOGGER.info("Adding %d light entities", len(entities))
+            _LOGGER.info("Adding %d light entities to Home Assistant", len(entities))
             async_add_entities(entities)
         else:
             _LOGGER.warning("No valid light entities were created")
