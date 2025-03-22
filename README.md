@@ -152,7 +152,6 @@ Ce projet est open source et les contributions sont les bienvenues! Pour contrib
 
 ## Ressources
 
-- [Documentation de l'API Hemis](docs/hemis/)
 - [Documentation Home Assistant pour les développeurs](https://developers.home-assistant.io/)
 
 ## Remerciements
